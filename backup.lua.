@@ -1,0 +1,491 @@
+local cloneref = cloneref or function(i) return i end
+local function svc(n) return cloneref(game:GetService(n)) end
+
+local Players = svc("Players")
+local RunService = svc("RunService")
+local UIS = svc("UserInputService")
+local Workspace = svc("Workspace")
+local lp = Players.LocalPlayer
+
+local env = (getgenv and getgenv()) or _G
+if env.MilkEggCleanup then pcall(env.MilkEggCleanup) end
+
+local connections = {}
+local eggs = {}
+local alive = true
+local mode = "idle" -- idle | going | atEgg | away | returning
+local token = 0
+local rng = Random.new()
+local state = { ijump = false }
+
+local GLIDE_MIN, GLIDE_MAX = 220, 300
+local BRAKE_DIST = 30
+local SAFE_RADIUS = 15
+
+local function track(c)
+	table.insert(connections, c)
+	return c
+end
+
+local function resolveParent()
+	if gethui then
+		local ok, h = pcall(gethui)
+		if ok and h then return h end
+	end
+	local ok, cg = pcall(function() return cloneref(game:GetService("CoreGui")) end)
+	if ok and cg then return cg end
+	return lp:WaitForChild("PlayerGui")
+end
+local guiParent = resolveParent()
+
+local function getRoot()
+	local ch = lp.Character
+	return ch and ch:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHum()
+	local ch = lp.Character
+	return ch and ch:FindFirstChildOfClass("Humanoid")
+end
+
+local function posOf(inst: Instance): Vector3?
+	if inst:IsA("BasePart") then return inst.Position end
+	if inst:IsA("Model") then
+		local ok, cf = pcall(inst.GetPivot, inst)
+		if ok then return cf.Position end
+	end
+	return nil
+end
+
+local function adorneePart(inst: Instance)
+	if inst:IsA("BasePart") then return inst end
+	if inst:IsA("Model") then
+		return inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+	end
+	return nil
+end
+
+-- egg detection
+local function isEgg(inst: Instance): boolean
+	if not (inst:IsA("BasePart") or inst:IsA("Model")) then return false end
+	if not inst.Name:lower():find("egg") then return false end
+	local ch = lp.Character
+	if ch and inst:IsDescendantOf(ch) then return false end
+	if inst:IsA("BasePart") and inst.Parent and inst.Parent:IsA("Model")
+		and inst.Parent.Name:lower():find("egg") then
+		return false
+	end
+	return true
+end
+
+local function consider(inst: Instance)
+	if isEgg(inst) then eggs[inst] = true end
+end
+
+for _, d in ipairs(Workspace:GetDescendants()) do consider(d) end
+track(Workspace.DescendantAdded:Connect(consider))
+
+task.spawn(function()
+	while alive do
+		task.wait(1)
+		for inst in pairs(eggs) do
+			if not inst.Parent then eggs[inst] = nil end
+		end
+	end
+end)
+
+-- pet reading (used to rank eggs)
+local KEYS = { "pet", "reward", "content", "hatch", "result", "item", "unit", "brainrot" }
+
+local function hasKey(name: string): boolean
+	local n = name:lower()
+	for _, k in ipairs(KEYS) do
+		if n:find(k) then return true end
+	end
+	return false
+end
+
+local function readFrom(inst: Instance): string?
+	for k, v in pairs(inst:GetAttributes()) do
+		if type(v) == "string" and v ~= "" and hasKey(k) then
+			return v
+		end
+	end
+	for _, d in ipairs(inst:GetDescendants()) do
+		if d:IsA("StringValue") and d.Value ~= "" and hasKey(d.Name) then
+			return d.Value
+		end
+		if d:IsA("ObjectValue") and d.Value and hasKey(d.Name) then
+			return d.Value.Name
+		end
+		if (d:IsA("Model") or d:IsA("BasePart")) and d.Name:lower():find("pet") then
+			return d.Name
+		end
+		for k, v in pairs(d:GetAttributes()) do
+			if type(v) == "string" and v ~= "" and hasKey(k) then
+				return v
+			end
+		end
+	end
+	return nil
+end
+
+local function readPet(inst: Instance): string?
+	local found = readFrom(inst)
+	if found then return found end
+	local par = inst.Parent
+	if par and par ~= Workspace and par:IsA("Model") then
+		for k, v in pairs(par:GetAttributes()) do
+			if type(v) == "string" and v ~= "" and hasKey(k) then
+				return v
+			end
+		end
+	end
+	return nil
+end
+
+-- best egg scoring
+local RANKS = {
+	{ "secret", 8 }, { "divine", 8 }, { "mythic", 7 }, { "legend", 6 },
+	{ "epic", 5 }, { "rare", 4 }, { "uncommon", 3 }, { "common", 2 },
+}
+local NUM_KEYS = { "rarity", "tier", "value", "price", "cost", "worth", "multiplier", "level", "luck" }
+
+local function rankOf(text: string): number
+	local t = text:lower()
+	for _, r in ipairs(RANKS) do
+		if t:find(r[1]) then return r[2] end
+	end
+	return 0
+end
+
+local function scoreEgg(inst: Instance): number
+	local rankBest, numBest = rankOf(inst.Name), 0
+	local pet = readPet(inst)
+	if pet then rankBest = math.max(rankBest, rankOf(pet)) end
+
+	local function scan(o: Instance)
+		for k, v in pairs(o:GetAttributes()) do
+			local kl = tostring(k):lower()
+			if type(v) == "string" then
+				rankBest = math.max(rankBest, rankOf(v))
+			elseif type(v) == "number" then
+				for _, nk in ipairs(NUM_KEYS) do
+					if kl:find(nk) then
+						numBest = math.max(numBest, v)
+						break
+					end
+				end
+			end
+		end
+	end
+
+	scan(inst)
+	for _, d in ipairs(inst:GetDescendants()) do scan(d) end
+	return rankBest * 1e6 + math.min(numBest, 999999)
+end
+
+local function bestEgg(from: Vector3): Instance?
+	local best, bestScore, bestDist = nil, -1, math.huge
+	for inst in pairs(eggs) do
+		if inst.Parent then
+			local p = posOf(inst)
+			if p then
+				local s = scoreEgg(inst)
+				local d = (p - from).Magnitude
+				if s > bestScore or (s == bestScore and d < bestDist) then
+					best, bestScore, bestDist = inst, s, d
+				end
+			end
+		end
+	end
+	return best
+end
+
+-- infinite jump
+track(UIS.JumpRequest:Connect(function()
+	if not state.ijump then return end
+	local hum = getHum()
+	if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+end))
+
+-- guided glide: ramp up, varying cruise, brake near target
+local function glide(getTarget: () -> Vector3?, myToken: number): boolean
+	local elapsed, sinceRoll = 0, 1
+	local cruise = rng:NextNumber(GLIDE_MIN, GLIDE_MAX)
+	while alive and token == myToken do
+		local dt = RunService.Heartbeat:Wait()
+		local root, hum = getRoot(), getHum()
+		if not root or not hum or hum.Health <= 0 then return false end
+		local target = getTarget()
+		if not target then return false end
+		local delta = target - root.Position
+		local dist = delta.Magnitude
+		if dist < 2 then return true end
+
+		elapsed += dt
+		sinceRoll += dt
+		if sinceRoll >= 0.4 then
+			sinceRoll = 0
+			cruise = rng:NextNumber(GLIDE_MIN, GLIDE_MAX)
+		end
+
+		local ramp = math.clamp(elapsed / 0.3, 0.3, 1)
+		local brake = math.clamp(dist / BRAKE_DIST, 0.2, 1)
+		local spd = cruise * ramp * brake
+		local step = math.min(dist, spd * dt)
+
+		root.CFrame = root.CFrame + delta.Unit * step
+		root.AssemblyLinearVelocity = Vector3.zero
+	end
+	return false
+end
+
+local function collectEgg(inst: Instance)
+	local root = getRoot()
+	if not root then return end
+	local targets = { inst }
+	for _, d in ipairs(inst:GetDescendants()) do table.insert(targets, d) end
+	for _, d in ipairs(targets) do
+		if d:IsA("ProximityPrompt") and fireproximityprompt then
+			pcall(fireproximityprompt, d)
+		elseif d:IsA("ClickDetector") and fireclickdetector then
+			pcall(fireclickdetector, d)
+		end
+	end
+	local part = adorneePart(inst)
+	if part and firetouchinterest then
+		pcall(function()
+			firetouchinterest(root, part, 0)
+			firetouchinterest(root, part, 1)
+		end)
+	end
+	task.wait(0.4)
+end
+
+-- ui
+local gui = Instance.new("ScreenGui")
+gui.Name = "MilkEgg"
+gui.ResetOnSpawn = false
+gui.Parent = guiParent
+
+local BAR_H, BODY_H = 30, 194
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(220, BAR_H + BODY_H)
+main.Position = UDim2.fromOffset(40, 120)
+main.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+main.BorderSizePixel = 0
+main.ClipsDescendants = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+
+local bar = Instance.new("Frame")
+bar.Size = UDim2.new(1, 0, 0, BAR_H)
+bar.BackgroundTransparency = 1
+bar.Active = true
+bar.Parent = main
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -70, 1, 0)
+title.Position = UDim2.fromOffset(10, 0)
+title.BackgroundTransparency = 1
+title.Text = "ovo hub"
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.TextColor3 = Color3.fromRGB(235, 235, 240)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 15
+title.Parent = bar
+
+local function barButton(text: string, xOff: number, color: Color3)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.fromOffset(26, 22)
+	b.Position = UDim2.new(1, xOff, 0, 4)
+	b.BackgroundColor3 = color
+	b.BorderSizePixel = 0
+	b.Text = text
+	b.TextColor3 = Color3.fromRGB(235, 235, 240)
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 14
+	b.Parent = bar
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+	return b
+end
+
+local minBtn = barButton("-", -62, Color3.fromRGB(60, 60, 70))
+local closeBtn = barButton("X", -32, Color3.fromRGB(140, 60, 60))
+
+local body = Instance.new("Frame")
+body.Size = UDim2.new(1, 0, 0, BODY_H)
+body.Position = UDim2.fromOffset(0, BAR_H)
+body.BackgroundTransparency = 1
+body.Parent = main
+
+-- window drag
+local dragging, dragStart, startPos = false, nil, nil
+track(bar.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+		dragging, dragStart, startPos = true, i.Position, main.Position
+	end
+end))
+
+track(UIS.InputChanged:Connect(function(i)
+	local moving = i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch
+	if dragging and moving then
+		local d = i.Position - dragStart
+		main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+	end
+end))
+
+track(UIS.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end))
+
+-- buttons
+local OFF, ON = Color3.fromRGB(44, 44, 52), Color3.fromRGB(60, 140, 90)
+
+local function makeButton(text: string, y: number, color: Color3)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, -20, 0, 32)
+	b.Position = UDim2.fromOffset(10, y)
+	b.BackgroundColor3 = color
+	b.BorderSizePixel = 0
+	b.Text = text
+	b.TextColor3 = Color3.fromRGB(235, 235, 240)
+	b.Font = Enum.Font.Gotham
+	b.TextSize = 14
+	b.Parent = body
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+	return b
+end
+
+local jumpBtn = makeButton("infinite jump: off", 6, OFF)
+track(jumpBtn.MouseButton1Click:Connect(function()
+	state.ijump = not state.ijump
+	jumpBtn.Text = "infinite jump" .. (state.ijump and ": on" or ": off")
+	jumpBtn.BackgroundColor3 = state.ijump and ON or OFF
+end))
+
+local saveBtn = makeButton("salvar local", 44, OFF)
+local huntBtn = makeButton("teleguiado ovo", 82, OFF)
+local homeBtn = makeButton("teleguiado voltar", 120, OFF)
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -20, 0, 20)
+statusLabel.Position = UDim2.fromOffset(10, 160)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 13
+statusLabel.Text = "salve a zona segura"
+statusLabel.Parent = body
+
+local function setStatus(t: string)
+	statusLabel.Text = t
+end
+
+local function safeSpot(): Vector3?
+	local s = env.MilkEggSaved
+	if typeof(s) == "Vector3" then return s end
+	return nil
+end
+
+track(saveBtn.MouseButton1Click:Connect(function()
+	if mode == "going" or mode == "returning" then return end
+	local root = getRoot()
+	if not root then return end
+	env.MilkEggSaved = root.Position
+	mode = "idle"
+	setStatus("zona segura salva")
+end))
+
+track(huntBtn.MouseButton1Click:Connect(function()
+	if mode ~= "idle" then
+		setStatus(mode == "returning" and "voltando. aguarde" or "volte pra zona segura")
+		return
+	end
+	local home = safeSpot()
+	if not home then setStatus("salve a zona segura") return end
+	local root = getRoot()
+	if not root then return end
+	if (root.Position - home).Magnitude > SAFE_RADIUS then
+		setStatus("so na zona segura")
+		return
+	end
+	local egg = bestEgg(root.Position)
+	if not egg then setStatus("nenhum ovo achado") return end
+
+	token += 1
+	local my = token
+	mode = "going"
+	setStatus("indo: " .. egg.Name)
+
+	task.spawn(function()
+		local ok = glide(function()
+			if not egg.Parent then return nil end
+			local p = posOf(egg)
+			return p and (p + Vector3.new(0, 3, 0)) or nil
+		end, my)
+		if token ~= my then return end
+		if ok then
+			setStatus("coletando")
+			pcall(collectEgg, egg)
+			if token ~= my then return end
+			mode = "atEgg"
+			setStatus("no ovo. aperte voltar")
+		else
+			mode = "away"
+			setStatus("ovo sumiu. aperte voltar")
+		end
+	end)
+end))
+
+track(homeBtn.MouseButton1Click:Connect(function()
+	if mode == "returning" then return end
+	local home = safeSpot()
+	if not home then setStatus("salve a zona segura") return end
+
+	token += 1
+	local my = token
+	mode = "returning"
+	setStatus("voltando")
+
+	task.spawn(function()
+		local ok = glide(function() return home end, my)
+		if token ~= my then return end
+		mode = ok and "idle" or "away"
+		setStatus(ok and "na zona segura" or "falhou. tente de novo")
+	end)
+end))
+
+-- minimize / close
+local minimized = false
+track(minBtn.MouseButton1Click:Connect(function()
+	minimized = not minimized
+	body.Visible = not minimized
+	minBtn.Text = minimized and "+" or "-"
+	main.Size = UDim2.fromOffset(220, minimized and BAR_H or (BAR_H + BODY_H))
+end))
+
+local function cleanup()
+	alive = false
+	token += 1
+	for _, c in ipairs(connections) do
+		pcall(function() c:Disconnect() end)
+	end
+	connections = {}
+	pcall(function() gui:Destroy() end)
+end
+env.MilkEggCleanup = cleanup
+
+track(closeBtn.MouseButton1Click:Connect(cleanup))
+
+track(UIS.InputBegan:Connect(function(i, gp)
+	if gp then return end
+	if i.KeyCode == Enum.KeyCode.RightShift then
+		main.Visible = not main.Visible
+	end
+end))
