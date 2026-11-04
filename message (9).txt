@@ -1,0 +1,909 @@
+-- ====================================================================
+-- STARS HUB - ULTIMATE CONFIGURAÇÃO & TELEGUIDER SYSTEM
+-- ====================================================================
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local VirtualUser = game:GetService("VirtualUser")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+
+local env = (getgenv and getgenv()) or _G
+if env.MilkEggCleanup then pcall(env.MilkEggCleanup) end
+
+local connections = {}
+local eggs = {}
+local alive = true
+local token = 0
+local rng = Random.new()
+
+-- Amplitude de distância aumentada (Studs ampliados para teleguiado longo)
+local GLIDE_MIN, GLIDE_MAX = 280, 380
+local BRAKE_DIST = 35
+
+local function track(c)
+    table.insert(connections, c)
+    return c
+end
+
+-- States System
+local States = {
+    InfiniteJump = false,
+    AutoClick = false,
+    Invisible = false,
+    Fly = false,
+    AntiGuard = false,
+    AntiLag = false,
+    AntiCrash = false,
+    SavedCFrame = nil,
+    FlySpeed = 50,
+    TeleGuiadorActive = false
+}
+
+-- UI Setup
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "StarsHubGui"
+ScreenGui.ResetOnSpawn = false
+
+if gethui then
+    ScreenGui.Parent = gethui()
+elseif syn and syn.protect_gui then
+    syn.protect_gui(ScreenGui)
+    ScreenGui.Parent = game:GetService("CoreGui")
+else
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- Floating Hammer Toggle Button
+local OpenButton = Instance.new("TextButton")
+OpenButton.Name = "OpenButton"
+OpenButton.Size = UDim2.new(0, 50, 0, 50)
+OpenButton.Position = UDim2.new(0, 15, 0.5, -25)
+OpenButton.BackgroundColor3 = Color3.fromRGB(255, 204, 0)
+OpenButton.BorderSizePixel = 2
+OpenButton.BorderColor3 = Color3.fromRGB(0, 0, 0)
+OpenButton.Text = "🔨"
+OpenButton.TextSize = 28
+OpenButton.Visible = false
+OpenButton.Active = true
+OpenButton.Draggable = true
+OpenButton.Parent = ScreenGui
+
+-- Main Container Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 560, 0, 410)
+MainFrame.Position = UDim2.new(0.5, -280, 0.5, -205)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 26)
+MainFrame.BorderSizePixel = 2
+MainFrame.BorderColor3 = Color3.fromRGB(0, 0, 0)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+-- Header Title Bar
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Size = UDim2.new(1, 0, 0, 40)
+Header.BackgroundColor3 = Color3.fromRGB(255, 204, 0)
+Header.BorderSizePixel = 1
+Header.BorderColor3 = Color3.fromRGB(0, 0, 0)
+Header.Parent = MainFrame
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Name = "TitleLabel"
+TitleLabel.Size = UDim2.new(1, -50, 1, 0)
+TitleLabel.Position = UDim2.new(0, 12, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "Stars hub"
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Font = Enum.Font.SourceSansBold
+TitleLabel.TextSize = 18
+TitleLabel.Parent = Header
+
+local TitleStroke = Instance.new("UIStroke")
+TitleStroke.Thickness = 2
+TitleStroke.Color = Color3.fromRGB(0, 0, 0)
+TitleStroke.Parent = TitleLabel
+
+-- Close Button (X)
+local CloseButton = Instance.new("TextButton")
+CloseButton.Name = "CloseButton"
+CloseButton.Size = UDim2.new(0, 32, 0, 32)
+CloseButton.Position = UDim2.new(1, -36, 0, 4)
+CloseButton.BackgroundColor3 = Color3.fromRGB(255, 0, 51)
+CloseButton.BorderSizePixel = 2
+CloseButton.BorderColor3 = Color3.fromRGB(0, 0, 0)
+CloseButton.Text = "X"
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.Font = Enum.Font.SourceSansBold
+CloseButton.TextSize = 20
+CloseButton.Parent = Header
+
+-- Sidebar Frame
+local Sidebar = Instance.new("Frame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0, 130, 1, -40)
+Sidebar.Position = UDim2.new(0, 0, 0, 40)
+Sidebar.BackgroundColor3 = Color3.fromRGB(15, 16, 20)
+Sidebar.BorderSizePixel = 1
+Sidebar.BorderColor3 = Color3.fromRGB(0, 0, 0)
+Sidebar.Parent = MainFrame
+
+local SidebarList = Instance.new("UIListLayout")
+SidebarList.Padding = UDim.new(0, 6)
+SidebarList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+SidebarList.SortOrder = Enum.SortOrder.LayoutOrder
+SidebarList.Parent = Sidebar
+
+local SidebarPadding = Instance.new("UIPadding")
+SidebarPadding.PaddingTop = UDim.new(0, 8)
+SidebarPadding.Parent = Sidebar
+
+-- Content Display Panel
+local ContentArea = Instance.new("Frame")
+ContentArea.Name = "ContentArea"
+ContentArea.Size = UDim2.new(1, -135, 1, -45)
+ContentArea.Position = UDim2.new(0, 135, 0, 45)
+ContentArea.BackgroundTransparency = 1
+ContentArea.Parent = MainFrame
+
+-- Tab Generator (Ordem: Player, Ovos, Teleguiador, Utils, Configuração)
+local Tabs = {}
+local function CreateTab(name)
+    local Page = Instance.new("ScrollingFrame")
+    Page.Name = name .. "Page"
+    Page.Size = UDim2.new(1, -10, 1, 0)
+    Page.BackgroundTransparency = 1
+    Page.ScrollBarThickness = 4
+    Page.Visible = false
+    Page.Parent = ContentArea
+    
+    local List = Instance.new("UIListLayout")
+    List.Padding = UDim.new(0, 8)
+    List.SortOrder = Enum.SortOrder.LayoutOrder
+    List.Parent = Page
+    
+    Tabs[name] = Page
+    return Page
+end
+
+local PlayerTab = CreateTab("Player")
+local EggsTab = CreateTab("Ovos")
+local TeleguiadorTab = CreateTab("Teleguiador")
+local UtilsTab = CreateTab("Utils")
+local ConfigTab = CreateTab("Configuração")
+
+-- Tab Buttons
+local TabButtons = {}
+local function CreateTabButton(name, layoutOrder)
+    local Btn = Instance.new("TextButton")
+    Btn.Name = name .. "TabBtn"
+    Btn.Size = UDim2.new(0.9, 0, 0, 32)
+    Btn.Font = Enum.Font.SourceSansBold
+    Btn.TextSize = 16
+    Btn.Text = name
+    Btn.BorderSizePixel = 2
+    Btn.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    Btn.LayoutOrder = layoutOrder
+    Btn.Parent = Sidebar
+
+    local TextStroke = Instance.new("UIStroke")
+    TextStroke.Thickness = 1.5
+    TextStroke.Color = Color3.fromRGB(0, 0, 0)
+    TextStroke.Parent = Btn
+
+    TabButtons[name] = Btn
+
+    Btn.MouseButton1Click:Connect(function()
+        for tabName, page in pairs(Tabs) do
+            page.Visible = (tabName == name)
+        end
+        for tabName, button in pairs(TabButtons) do
+            if tabName == name then
+                button.BackgroundColor3 = Color3.fromRGB(255, 204, 0)
+                button.TextColor3 = Color3.fromRGB(255, 255, 255)
+            else
+                button.BackgroundColor3 = Color3.fromRGB(45, 40, 15)
+                button.TextColor3 = Color3.fromRGB(200, 200, 200)
+            end
+        end
+    end)
+end
+
+CreateTabButton("Player", 1)
+CreateTabButton("Ovos", 2)
+CreateTabButton("Teleguiador", 3)
+CreateTabButton("Utils", 4)
+CreateTabButton("Configuração", 5)
+
+PlayerTab.Visible = true
+TabButtons["Player"].BackgroundColor3 = Color3.fromRGB(255, 204, 0)
+
+-- Helper UI Functions
+local function CreateToggleButton(parentTab, text, defaultState, callback)
+    local Button = Instance.new("TextButton")
+    Button.Size = UDim2.new(1, -10, 0, 36)
+    Button.BorderSizePixel = 2
+    Button.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    Button.Font = Enum.Font.SourceSansBold
+    Button.TextSize = 16
+    Button.Parent = parentTab
+
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Thickness = 1.5
+    Stroke.Color = Color3.fromRGB(0, 0, 0)
+    Stroke.Parent = Button
+
+    local state = defaultState
+    local function updateVisual()
+        if state then
+            Button.BackgroundColor3 = Color3.fromRGB(0, 180, 80)
+            Button.Text = text .. " [ATIVADO]"
+            Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            Button.BackgroundColor3 = Color3.fromRGB(40, 44, 52)
+            Button.Text = text .. " [DESATIVADO]"
+            Button.TextColor3 = Color3.fromRGB(180, 180, 180)
+        end
+    end
+
+    updateVisual()
+
+    Button.MouseButton1Click:Connect(function()
+        state = not state
+        updateVisual()
+        callback(state)
+    end)
+
+    return Button
+end
+
+local function CreateActionButton(parentTab, text, callback)
+    local Button = Instance.new("TextButton")
+    Button.Size = UDim2.new(1, -10, 0, 36)
+    Button.BackgroundColor3 = Color3.fromRGB(50, 90, 160)
+    Button.BorderSizePixel = 2
+    Button.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    Button.Font = Enum.Font.SourceSansBold
+    Button.Text = text
+    Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Button.TextSize = 16
+    Button.Parent = parentTab
+
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Thickness = 1.5
+    Stroke.Color = Color3.fromRGB(0, 0, 0)
+    Stroke.Parent = Button
+
+    Button.MouseButton1Click:Connect(function()
+        callback()
+    end)
+
+    return Button
+end
+
+-- Utilitários de Personagem
+local function getRoot()
+    local ch = LocalPlayer.Character
+    return ch and ch:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHum()
+    local ch = LocalPlayer.Character
+    return ch and ch:FindFirstChildOfClass("Humanoid")
+end
+
+local function posOf(inst: Instance): Vector3?
+    if inst:IsA("BasePart") then return inst.Position end
+    if inst:IsA("Model") then
+        local ok, cf = pcall(inst.GetPivot, inst)
+        if ok then return cf.Position end
+    end
+    return nil
+end
+
+-- Egg Detection Core
+local function isEgg(inst: Instance): boolean
+    if not (inst:IsA("BasePart") or inst:IsA("Model")) then return false end
+    if not inst.Name:lower():find("egg") and not inst.Name:lower():find("ovo") then return false end
+    local ch = LocalPlayer.Character
+    if ch and inst:IsDescendantOf(ch) then return false end
+    return true
+end
+
+local function consider(inst: Instance)
+    if isEgg(inst) then eggs[inst] = true end
+end
+
+for _, d in ipairs(Workspace:GetDescendants()) do consider(d) end
+track(Workspace.DescendantAdded:Connect(consider))
+
+task.spawn(function()
+    while alive do
+        task.wait(1)
+        for inst in pairs(eggs) do
+            if not inst.Parent then eggs[inst] = nil end
+        end
+    end
+end)
+
+-- Pet Reading & Egg Ranking
+local KEYS = { "pet", "reward", "content", "hatch", "result", "item", "unit", "brainrot" }
+local function hasKey(name: string): boolean
+    local n = name:lower()
+    for _, k in ipairs(KEYS) do
+        if n:find(k) then return true end
+    end
+    return false
+end
+
+local function readFrom(inst: Instance): string?
+    for k, v in pairs(inst:GetAttributes()) do
+        if type(v) == "string" and v ~= "" and hasKey(k) then return v end
+    end
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("StringValue") and d.Value ~= "" and hasKey(d.Name) then return d.Value end
+        if d:IsA("ObjectValue") and d.Value and hasKey(d.Name) then return d.Value.Name end
+        if (d:IsA("Model") or d:IsA("BasePart")) and d.Name:lower():find("pet") then return d.Name end
+    end
+    return nil
+end
+
+local function readPet(inst: Instance): string?
+    local found = readFrom(inst)
+    if found then return found end
+    local par = inst.Parent
+    if par and par ~= Workspace and par:IsA("Model") then
+        for k, v in pairs(par:GetAttributes()) do
+            if type(v) == "string" and v ~= "" and hasKey(k) then return v end
+        end
+    end
+    return nil
+end
+
+local RANKS = {
+    { "secret", 8 }, { "divine", 8 }, { "mythic", 7 }, { "legend", 6 },
+    { "epic", 5 }, { "rare", 4 }, { "uncommon", 3 }, { "common", 2 },
+}
+local NUM_KEYS = { "rarity", "tier", "value", "price", "cost", "worth", "multiplier", "level", "luck" }
+
+local function rankOf(text: string): number
+    local t = text:lower()
+    for _, r in ipairs(RANKS) do
+        if t:find(r[1]) then return r[2] end
+    end
+    return 0
+end
+
+local function scoreEgg(inst: Instance): number
+    local rankBest, numBest = rankOf(inst.Name), 0
+    local pet = readPet(inst)
+    if pet then rankBest = math.max(rankBest, rankOf(pet)) end
+    return rankBest * 1e6 + math.min(numBest, 999999)
+end
+
+local function bestEgg(from: Vector3): Instance?
+    local best, bestScore, bestDist = nil, -1, math.huge
+    for inst in pairs(eggs) do
+        if inst.Parent then
+            local p = posOf(inst)
+            if p then
+                local s = scoreEgg(inst)
+                local d = (p - from).Magnitude
+                if s > bestScore or (s == bestScore and d < bestDist) then
+                    best, bestScore, bestDist = inst, s, d
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- ====================================================================
+-- ATIVAÇÃO DE BALANÇO AUTOMÁTICO (CLIQUE DIRETO NA INTERFACE)
+-- ====================================================================
+
+local function TriggerAutoSwingUI()
+    task.spawn(function()
+        for i = 1, 6 do
+            pcall(function()
+                for _, gui in pairs(LocalPlayer:WaitForChild("PlayerGui"):GetDescendants()) do
+                    if gui:IsA("TextButton") or gui:IsA("TextLabel") or gui:IsA("ImageButton") then
+                        local txt = ""
+                        if gui:IsA("TextButton") or gui:IsA("TextLabel") then
+                            txt = string.lower(gui.Text)
+                        elseif gui.Name then
+                            txt = string.lower(gui.Name)
+                        end
+
+                        if string.find(txt, "balanço") or string.find(txt, "balanco") or string.find(txt, "automatic") or string.find(txt, "swing") then
+                            if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+                                gui.MouseButton1Click:Fire()
+                            end
+                        end
+                    end
+                end
+            end)
+
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton1(Vector2.new(0, 0))
+            task.wait(0.08)
+        end
+    end)
+end
+
+-- ====================================================================
+-- MOTOR DE VOO INSTANTÂNEO & GLIDE INTELIGENTE
+-- ====================================================================
+
+local function FastGuideTo(targetCFrame)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    for _, part in pairs(char:GetChildren()) do
+        if part:IsA("BasePart") then part.CanCollide = false end
+    end
+
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
+    hrp.CFrame = targetCFrame + Vector3.new(0, 4, 0)
+
+    task.wait(0.05)
+
+    for _, part in pairs(char:GetChildren()) do
+        if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then part.CanCollide = true end
+    end
+end
+
+local function glide(getTarget: () -> Vector3?, myToken: number): boolean
+    local elapsed, sinceRoll = 0, 1
+    local cruise = rng:NextNumber(GLIDE_MIN, GLIDE_MAX)
+    while alive and token == myToken do
+        local dt = RunService.Heartbeat:Wait()
+        local root, hum = getRoot(), getHum()
+        if not root or not hum or hum.Health <= 0 then return false end
+        local target = getTarget()
+        if not target then return false end
+        local delta = target - root.Position
+        local dist = delta.Magnitude
+        if dist < 2 then return true end
+
+        elapsed += dt
+        sinceRoll += dt
+        if sinceRoll >= 0.4 then
+            sinceRoll = 0
+            cruise = rng:NextNumber(GLIDE_MIN, GLIDE_MAX)
+        end
+
+        local ramp = math.clamp(elapsed / 0.3, 0.3, 1)
+        local brake = math.clamp(dist / BRAKE_DIST, 0.2, 1)
+        local spd = cruise * ramp * brake
+        local step = math.min(dist, spd * dt)
+
+        root.CFrame = root.CFrame + delta.Unit * step
+        root.AssemblyLinearVelocity = Vector3.zero
+    end
+    return false
+end
+
+local function safeSpot(): Vector3?
+    local s = env.MilkEggSaved
+    if typeof(s) == "Vector3" then return s end
+    return nil
+end
+
+-- ====================================================================
+-- SISTEMA ANTI-GUARDA E ABA PLAYER
+-- ====================================================================
+
+CreateToggleButton(PlayerTab, "Indetectável para o Guarda", false, function(enabled)
+    States.AntiGuard = enabled
+    task.spawn(function()
+        while States.AntiGuard do
+            pcall(function()
+                for _, npc in pairs(Workspace:GetDescendants()) do
+                    if npc:IsA("Model") then
+                        local nameL = string.lower(npc.Name)
+                        if string.find(nameL, "guard") or string.find(nameL, "policia") or string.find(nameL, "npc") or string.find(nameL, "seguranca") then
+                            for _, part in pairs(npc:GetDescendants()) do
+                                if part:IsA("BasePart") then
+                                    part.CanCollide = false
+                                    part.Transparency = 0.8
+                                end
+                            end
+                            local hum = npc:FindFirstChildOfClass("Humanoid")
+                            if hum then
+                                hum.WalkSpeed = 0
+                                hum.JumpPower = 0
+                            end
+                        end
+                    end
+                end
+            end)
+            task.wait(0.3)
+        end
+    end)
+end)
+
+CreateToggleButton(PlayerTab, "Teleguiado Automático", false, function(enabled)
+    States.TeleGuiadorActive = enabled
+    if enabled then
+        task.spawn(function()
+            while States.TeleGuiadorActive do
+                local root = getRoot()
+                if root then
+                    local egg = bestEgg(root.Position)
+                    if egg then
+                        token += 1
+                        local my = token
+                        glide(function()
+                            if not egg.Parent then return nil end
+                            local p = posOf(egg)
+                            return p and (p + Vector3.new(0, 3, 0)) or nil
+                        end, my)
+                        if token == my and egg.Parent then
+                            TriggerAutoSwingUI()
+                        end
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+    end
+end)
+
+CreateToggleButton(PlayerTab, "Infinite Jump", false, function(enabled)
+    States.InfiniteJump = enabled
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if States.InfiniteJump then
+        local hum = getHum()
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+
+CreateToggleButton(PlayerTab, "Fly (Voo)", false, function(enabled)
+    States.Fly = enabled
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    
+    local hrp = char.HumanoidRootPart
+    if enabled then
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "FlyVelocity"
+        bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+        bv.Velocity = Vector3.zero
+        bv.Parent = hrp
+        
+        local bg = Instance.new("BodyGyro")
+        bg.Name = "FlyGyro"
+        bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+        bg.CFrame = hrp.CFrame
+        bg.Parent = hrp
+
+        task.spawn(function()
+            while States.Fly and char and char:FindFirstChild("HumanoidRootPart") do
+                local camera = Workspace.CurrentCamera
+                local moveDir = Vector3.zero
+                
+                if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + camera.CFrame.LookVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - camera.CFrame.LookVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - camera.CFrame.RightVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + camera.CFrame.RightVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0, 1, 0) end
+                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir = moveDir - Vector3.new(0, 1, 0) end
+                
+                bv.Velocity = moveDir * States.FlySpeed
+                bg.CFrame = camera.CFrame
+                RunService.RenderStepped:Wait()
+            end
+            if bv then bv:Destroy() end
+            if bg then bg:Destroy() end
+        end)
+    else
+        if hrp:FindFirstChild("FlyVelocity") then hrp.FlyVelocity:Destroy() end
+        if hrp:FindFirstChild("FlyGyro") then hrp.FlyGyro:Destroy() end
+    end
+end)
+
+CreateToggleButton(PlayerTab, "Invisível (Local)", false, function(enabled)
+    States.Invisible = enabled
+    local char = LocalPlayer.Character
+    if char then
+        for _, part in pairs(char:GetDescendants()) do
+            if part:IsA("BasePart") or part:IsA("Decal") then
+                if part.Name ~= "HumanoidRootPart" then
+                    part.Transparency = enabled and 1 or 0
+                end
+            end
+        end
+    end
+end)
+
+-- ====================================================================
+-- ABA OVOS: SCANNER ASSÍNCRONO & VISUALIZAÇÃO DE EGGS
+-- ====================================================================
+
+local EggsScrollingFrame = Instance.new("ScrollingFrame")
+EggsScrollingFrame.Size = UDim2.new(1, 0, 1, -10)
+EggsScrollingFrame.BackgroundTransparency = 1
+EggsScrollingFrame.ScrollBarThickness = 6
+EggsScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+EggsScrollingFrame.Parent = EggsTab
+
+local EggsListLayout = Instance.new("UIListLayout")
+EggsListLayout.Padding = UDim.new(0, 8)
+EggsListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+EggsListLayout.Parent = EggsScrollingFrame
+
+EggsListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    EggsScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, EggsListLayout.AbsoluteContentSize.Y + 10)
+end)
+
+local function RenderEggCardSafe(eggModel, eggName, incomeText)
+    local Card = Instance.new("Frame")
+    Card.Size = UDim2.new(1, -10, 0, 65)
+    Card.BackgroundColor3 = Color3.fromRGB(30, 33, 40)
+    Card.BorderSizePixel = 2
+    Card.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    Card.Parent = EggsScrollingFrame
+
+    local Viewport = Instance.new("ViewportFrame")
+    Viewport.Size = UDim2.new(0, 50, 0, 50)
+    Viewport.Position = UDim2.new(0, 5, 0, 7)
+    Viewport.BackgroundColor3 = Color3.fromRGB(15, 16, 20)
+    Viewport.BorderSizePixel = 1
+    Viewport.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    Viewport.Parent = Card
+
+    task.spawn(function()
+        pcall(function()
+            local ClonedEgg = eggModel:Clone()
+            for _, desc in pairs(ClonedEgg:GetDescendants()) do
+                if desc:IsA("Script") or desc:IsA("LocalScript") or desc:IsA("ModuleScript") then
+                    desc:Destroy()
+                end
+            end
+            ClonedEgg.Parent = Viewport
+
+            local Camera = Instance.new("Camera")
+            Viewport.CurrentCamera = Camera
+            Camera.Parent = Viewport
+
+            if ClonedEgg:IsA("Model") then
+                local cf, size = ClonedEgg:GetBoundingBox()
+                Camera.CFrame = CFrame.new(cf.Position + Vector3.new(0, 0, math.max(size.Y, 2) * 1.6), cf.Position)
+            elseif ClonedEgg:IsA("BasePart") then
+                Camera.CFrame = CFrame.new(ClonedEgg.Position + Vector3.new(0, 0, math.max(ClonedEgg.Size.Y, 2) * 1.6), ClonedEgg.Position)
+            end
+        end)
+    end)
+
+    local NameLabel = Instance.new("TextLabel")
+    NameLabel.Size = UDim2.new(1, -170, 0, 24)
+    NameLabel.Position = UDim2.new(0, 62, 0, 6)
+    NameLabel.BackgroundTransparency = 1
+    NameLabel.Text = eggName ~= "" and eggName or eggModel.Name
+    NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    NameLabel.Font = Enum.Font.SourceSansBold
+    NameLabel.TextSize = 14
+    NameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    NameLabel.Parent = Card
+
+    local IncomeLabel = Instance.new("TextLabel")
+    IncomeLabel.Size = UDim2.new(1, -170, 0, 24)
+    IncomeLabel.Position = UDim2.new(0, 62, 0, 30)
+    IncomeLabel.BackgroundTransparency = 1
+    IncomeLabel.Text = "⚡ Geração: " .. (incomeText ~= "" and incomeText or "Egg Padrão")
+    IncomeLabel.TextColor3 = Color3.fromRGB(0, 255, 128)
+    IncomeLabel.Font = Enum.Font.SourceSansBold
+    IncomeLabel.TextSize = 13
+    IncomeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    IncomeLabel.Parent = Card
+
+    local TPButton = Instance.new("TextButton")
+    TPButton.Size = UDim2.new(0, 95, 0, 36)
+    TPButton.Position = UDim2.new(1, -102, 0, 14)
+    TPButton.BackgroundColor3 = Color3.fromRGB(255, 204, 0)
+    TPButton.BorderSizePixel = 2
+    TPButton.BorderColor3 = Color3.fromRGB(0, 0, 0)
+    TPButton.Text = "Guiar Até"
+    TPButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+    TPButton.Font = Enum.Font.SourceSansBold
+    TPButton.TextSize = 14
+    TPButton.Parent = Card
+
+    TPButton.MouseButton1Click:Connect(function()
+        if eggModel and eggModel.Parent then
+            local targetCFrame = posOf(eggModel)
+            if targetCFrame then
+                FastGuideTo(CFrame.new(targetCFrame))
+                task.wait(0.1)
+                TriggerAutoSwingUI()
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    local RegisteredObjects = {}
+    local descendants = Workspace:GetDescendants()
+    
+    for i = 1, #descendants do
+        local obj = descendants[i]
+        pcall(function()
+            if obj and (obj:IsA("Model") or obj:IsA("BasePart")) then
+                local nameLower = string.lower(obj.Name)
+                if string.find(nameLower, "ovo") or string.find(nameLower, "egg") then
+                    if not obj:IsDescendantOf(LocalPlayer.Character) and not RegisteredObjects[obj] then
+                        RegisteredObjects[obj] = true
+
+                        local incomeVal = ""
+                        for _, desc in pairs(obj:GetDescendants()) do
+                            if desc:IsA("TextLabel") and desc.Text ~= "" then
+                                local txt = desc.Text
+                                if string.find(txt, "$") or string.find(string.lower(txt), "/s") or string.find(string.lower(txt), "sec") then
+                                    incomeVal = txt
+                                    break
+                                end
+                            end
+                        end
+
+                        RenderEggCardSafe(obj, obj.Name, incomeVal)
+                    end
+                end
+            end
+        end)
+
+        if i % 300 == 0 then task.wait() end
+    end
+end)
+
+-- ====================================================================
+-- ABA TELEGUIDADOR: APENAS BOTÕES DE TELEGUIADO
+-- ====================================================================
+
+CreateActionButton(TeleguiadorTab, "teleguiado ovo", function()
+    local root = getRoot()
+    if not root then return end
+    local egg = bestEgg(root.Position)
+    if egg then
+        token += 1
+        local my = token
+        task.spawn(function()
+            glide(function()
+                if not egg.Parent then return nil end
+                local p = posOf(egg)
+                return p and (p + Vector3.new(0, 3, 0)) or nil
+            end, my)
+            if token == my then
+                TriggerAutoSwingUI()
+            end
+        end)
+    end
+end)
+
+CreateActionButton(TeleguiadorTab, "teleguiado voltar", function()
+    local home = safeSpot()
+    if not home then return end
+    token += 1
+    local my = token
+    task.spawn(function()
+        glide(function() return home end, my)
+    end)
+end)
+
+-- ====================================================================
+-- ABA UTILS: AUTO CLICK
+-- ====================================================================
+
+CreateToggleButton(UtilsTab, "Auto Click", false, function(enabled)
+    States.AutoClick = enabled
+    task.spawn(function()
+        while States.AutoClick do
+            if mouse1click then
+                mouse1click()
+            else
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton1(Vector2.new(0, 0))
+            end
+            task.wait(0.05)
+        end
+    end)
+end)
+
+-- ====================================================================
+-- ABA CONFIGURAÇÃO: FPS BOOST, ANTI-LAG, ANTI-CRASH E REMOÇÃO DE TEXTURAS
+-- ====================================================================
+
+CreateActionButton(ConfigTab, "⚡ Ativar FPS Boost Ultra", function()
+    Lighting.GlobalShadows = false
+    Lighting.FogEnd = 9e9
+    settings().Rendering.QualityLevel = 1
+    for _, item in pairs(Workspace:GetDescendants()) do
+        if item:IsA("BasePart") then
+            item.Material = Enum.Material.Plastic
+            item.Reflectance = 0
+        elseif item:IsA("Decal") or item:IsA("Texture") then
+            item:Destroy()
+        elseif item:IsA("ParticleEmitter") or item:IsA("Trail") then
+            item.Enabled = false
+        end
+    end
+end)
+
+CreateToggleButton(ConfigTab, "🛡️ Anti-Lag (Leveza Total)", false, function(enabled)
+    States.AntiLag = enabled
+    task.spawn(function()
+        while States.AntiLag do
+            pcall(function()
+                for _, v in pairs(Workspace:GetDescendants()) do
+                    if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
+                        v.Enabled = false
+                    end
+                end
+            end)
+            task.wait(1)
+        end
+    end)
+end)
+
+CreateToggleButton(ConfigTab, "⚡ Anti-Crash (Estabilidade)", false, function(enabled)
+    States.AntiCrash = enabled
+    if enabled then
+        pcall(function()
+            settings().Rendering.EagerBulkExecution = true
+            game:GetService("ScriptContext").Error:Connect(function() end)
+        end)
+    end
+end)
+
+CreateActionButton(ConfigTab, "🧹 Remover Todas as Texturas", function()
+    pcall(function()
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("Texture") or obj:IsA("Decal") then
+                obj:Destroy()
+            elseif obj:IsA("BasePart") then
+                obj.Material = Enum.Material.SmoothPlastic
+                obj.Reflectance = 0
+            end
+        end
+    end)
+end)
+
+-- Controles da Interface (Minimizar / Fechar / Atalhos)
+CloseButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    OpenButton.Visible = true
+end)
+
+OpenButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = true
+    OpenButton.Visible = false
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and (input.KeyCode == Enum.KeyCode.RightControl or input.KeyCode == Enum.KeyCode.Insert) then
+        MainFrame.Visible = not MainFrame.Visible
+        OpenButton.Visible = not MainFrame.Visible
+    end
+end)
+
+local function cleanup()
+    alive = false
+    token += 1
+    for _, c in ipairs(connections) do
+        pcall(function() c:Disconnect() end)
+    end
+    connections = {}
+    pcall(function() ScreenGui:Destroy() end)
+end
+env.MilkEggCleanup = cleanup
